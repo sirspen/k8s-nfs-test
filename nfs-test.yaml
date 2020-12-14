@@ -288,7 +288,7 @@ spec:
         - name: busybox
           image: busybox
           imagePullPolicy: IfNotPresent
-          command: ['sh', '-c', 'echo Container is Running in node ${MY_NODE_NAME} > /mydata/${MY_POD_NAME} ; sleep 3600']
+          command: ['sh', '-c', 'echo Container is Running in node ${MY_NODE_NAME} > /mydata/${MY_POD_NAME} ; sleep 300']
           env:
           - name: MY_POD_NAME
             valueFrom:
