@@ -1,0 +1,307 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    name: nfs-server
+  name: nfs-server
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: nfs-server
+  labels:
+    app: nfs-server-provisioner
+  name: nfs-server-provisioner
+
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  namespace: nfs-server
+  name: nfs
+  labels:
+    app: nfs-server-provisioner
+provisioner: cluster.local/nfs-server-provisioner
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+mountOptions:
+  - vers=4.1
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nfs-server-provisioner
+  labels:
+    app: nfs-server-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get"]
+  - apiGroups: ["extensions"]
+    resources: ["podsecuritypolicies"]
+    resourceNames: ["nfs-provisioner"]
+    verbs: ["use"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "delete", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app: nfs-server-provisioner
+  name: nfs-server-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nfs-server-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-server-provisioner
+    namespace: nfs-server
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: nfs-server
+  name: nfs-server-provisioner
+  labels:
+    app: nfs-server-provisioner
+spec:
+  type: ClusterIP
+  ports:
+    - port: 2049
+      targetPort: nfs
+      protocol: TCP
+      name: nfs
+    - port: 2049
+      targetPort: nfs-udp
+      protocol: UDP
+      name: nfs-udp
+    - port: 32803
+      targetPort: nlockmgr
+      protocol: TCP
+      name: nlockmgr
+    - port: 32803
+      targetPort: nlockmgr-udp
+      protocol: UDP
+      name: nlockmgr-udp
+    - port: 20048
+      targetPort: mountd
+      protocol: TCP
+      name: mountd
+    - port: 20048
+      targetPort: mountd-udp
+      protocol: UDP
+      name: mountd-udp
+    - port: 875
+      targetPort: rquotad
+      protocol: TCP
+      name: rquotad
+    - port: 875
+      targetPort: rquotad-udp
+      protocol: UDP
+      name: rquotad-udp
+    - port: 111
+      targetPort: rpcbind
+      protocol: TCP
+      name: rpcbind
+    - port: 111
+      targetPort: rpcbind-udp
+      protocol: UDP
+      name: rpcbind-udp
+    - port: 662
+      targetPort: statd
+      protocol: TCP
+      name: statd
+    - port: 662
+      targetPort: statd-udp
+      protocol: UDP
+      name: statd-udp
+  selector:
+    app: nfs-server-provisioner
+    release: nfs-server
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: nfs-server
+  name: nfs-server-provisioner
+  labels:
+    app: nfs-server-provisioner
+    release: nfs-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfs-server-provisioner
+      release: nfs-server
+  serviceName: nfs-server-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-server-provisioner
+        release: nfs-server
+    spec:
+      # NOTE: This is 10 seconds longer than the default nfs-provisioner --grace-period value of 90sec
+      terminationGracePeriodSeconds: 100
+      serviceAccountName: nfs-server-provisioner
+      containers:
+        - name: nfs-server-provisioner
+          image: "quay.io/kubernetes_incubator/nfs-provisioner:v2.3.0"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: nfs
+              containerPort: 2049
+              protocol: TCP
+            - name: nfs-udp
+              containerPort: 2049
+              protocol: UDP
+            - name: nlockmgr
+              containerPort: 32803
+              protocol: TCP
+            - name: nlockmgr-udp
+              containerPort: 32803
+              protocol: UDP
+            - name: mountd
+              containerPort: 20048
+              protocol: TCP
+            - name: mountd-udp
+              containerPort: 20048
+              protocol: UDP
+            - name: rquotad
+              containerPort: 875
+              protocol: TCP
+            - name: rquotad-udp
+              containerPort: 875
+              protocol: UDP
+            - name: rpcbind
+              containerPort: 111
+              protocol: TCP
+            - name: rpcbind-udp
+              containerPort: 111
+              protocol: UDP
+            - name: statd
+              containerPort: 662
+              protocol: TCP
+            - name: statd-udp
+              containerPort: 662
+              protocol: UDP
+          securityContext:
+            capabilities:
+              add:
+                - DAC_READ_SEARCH
+                - SYS_RESOURCE
+          args:
+            - "-provisioner=cluster.local/nfs-server-provisioner"
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SERVICE_NAME
+              value: nfs-server-provisioner
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            limits:
+              cpu: 200m
+              memory: 512Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /export
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: "1Gi"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    name: nfs-test
+  name: nfs-test
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: busybox-nfs-volume
+  namespace: nfs-test
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 500M
+  storageClassName: nfs
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busybox-deployment
+  namespace: nfs-test
+  labels:
+    app: busybox
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: busybox
+  template:
+    metadata:
+      labels:
+        app: busybox
+    spec:
+      containers:
+        - name: busybox
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'echo Container is Running in node ${MY_NODE_NAME} > /mydata/${MY_POD_NAME} ; sleep 3600']
+          env:
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: MY_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          volumeMounts:
+          - name: host-volume
+            mountPath: /mydata
+      volumes:
+        - name: host-volume
+          persistentVolumeClaim:
+            claimName: busybox-nfs-volume
